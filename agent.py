@@ -8,8 +8,10 @@ from livekit.agents import (
     WorkerOptions,
     cli,
     JobProcess,
+    Agent,
+    AgentSession,
 )
-from livekit.agents import VoicePipelineAgent
+from livekit.agents.voice.room_io import RoomIO
 from livekit.plugins import deepgram, cartesia, openai, silero
 
 logger = logging.getLogger("voice-agent")
@@ -17,22 +19,19 @@ logging.basicConfig(level=logging.INFO)
 
 
 async def prewarm(proc: JobProcess):
-    """Preload heavy models (VAD) before accepting jobs.
-
-    This runs once when the worker process starts, not per-room.
-    """
+    """Preload heavy models (VAD) before accepting jobs."""
     logger.info("Preloading Silero VAD...")
     proc.userdata["vad"] = silero.VAD.load()
 
 
 async def request_fnc(req: JobRequest):
-    """Accept any job request (any user joining any room triggers the agent)."""
+    """Accept any job request."""
     logger.info(f"Accepting job for room {req.room.name}")
     await req.accept(entrypoint)
 
 
 async def entrypoint(ctx: JobContext):
-    """Called when the agent is assigned a job (someone joined a room)."""
+    """Called when the agent is assigned a job."""
     room_name = ctx.room.name
     logger.info(f"Starting agent for room: {room_name}")
 
@@ -49,36 +48,35 @@ async def entrypoint(ctx: JobContext):
         logger.warning("VAD not preloaded; falling back to on-demand load.")
         vad = silero.VAD.load()
 
-    # 4. Configure the conversational pipeline
-    # Groq is OpenAI-compatible; we use the OpenAI plugin with a custom base_url.
-    assistant = VoicePipelineAgent(
-        vad=vad,
+    # 4. Configure the conversational agent
+    agent = Agent(
+        instructions="You are a helpful, friendly voice assistant. Keep responses concise and conversational.",
         stt=deepgram.STT(
             api_key=os.environ["DEEPGRAM_API_KEY"],
-            model="nova-2",               # streaming STT optimized for conversation
+            model="nova-2",
             language="en-US",
         ),
         llm=openai.LLM(
             api_key=os.environ["GROQ_API_KEY"],
             base_url="https://api.groq.com/openai/v1",
-            model="llama-3.1-8b-instant",   # lowest-latency Groq model
+            model="llama-3.1-8b-instant",
             temperature=0.7,
         ),
         tts=cartesia.TTS(
             api_key=os.environ["CARTESIA_API_KEY"],
-            voice="a0e99841-438c-4a64-b679-ae501e7d6091",  # warm conversational default
-            model="sonic",                   # ultra-low latency
+            voice="a0e99841-438c-4a64-b679-ae501e7d6091",
+            model="sonic",
             language="en",
         ),
+        vad=vad,
     )
 
-    # 5. Start the assistant — it will automatically listen to participant audio,
-    #    run the STT -> LLM -> TTS pipeline, and publish synthesized audio back.
-    assistant.start(ctx.room, participant)
-    logger.info("Agent is now running and listening.")
+    # 5. Create session and bridge to the LiveKit room
+    session = AgentSession(agent=agent)
+    room_io = RoomIO(session, ctx.room, participant=participant)
 
-    # Optional: send a brief audible confirmation when ready
-    # (The agent will speak automatically once the user stops talking.)
+    logger.info("Agent is now running and listening.")
+    await room_io.run()
 
 
 if __name__ == "__main__":
