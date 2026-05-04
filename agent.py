@@ -9,7 +9,7 @@ from livekit.agents import (
     cli,
     JobProcess,
 )
-from livekit.agents.pipeline import VoicePipelineAgent
+from livekit.agents import VoicePipelineAgent
 from livekit.plugins import deepgram, cartesia, openai, silero
 
 logger = logging.getLogger("voice-agent")
