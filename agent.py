@@ -18,7 +18,7 @@ logger = logging.getLogger("voice-agent")
 logging.basicConfig(level=logging.INFO)
 
 
-async def prewarm(proc: JobProcess):
+def prewarm(proc: JobProcess):
     """Preload heavy models (VAD) before accepting jobs."""
     logger.info("Preloading Silero VAD...")
     proc.userdata["vad"] = silero.VAD.load()
