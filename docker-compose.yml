@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  # LiveKit Voice AI Agent
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: livekit-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - livekit-network   # MUST match the network name used by your LiveKit server
+    depends_on:
+      - livekit
+    # Uncomment if you want resource limits
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '2.0'
+    #       memory: 2G
+
+networks:
+  livekit-network:
+    external: true        # Assumes Dokploy created this network for your LiveKit stack
