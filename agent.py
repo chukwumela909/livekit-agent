@@ -27,7 +27,7 @@ def prewarm(proc: JobProcess):
 async def request_fnc(req: JobRequest):
     """Accept any job request."""
     logger.info(f"Accepting job for room {req.room.name}")
-    await req.accept(entrypoint)
+    await req.accept()
 
 
 async def entrypoint(ctx: JobContext):
