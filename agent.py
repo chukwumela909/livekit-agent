@@ -85,7 +85,27 @@ async def entrypoint(ctx: JobContext):
     )
 
     # 5. Create session and bridge to the LiveKit room
-    session = AgentSession(agent=agent)
+    session = AgentSession(
+        stt=deepgram.STT(
+            api_key=os.environ["DEEPGRAM_API_KEY"],
+            model="nova-2",
+            language="en-US",
+        ),
+        llm=openai.LLM(
+            api_key=os.environ["GROQ_API_KEY"],
+            base_url="https://api.groq.com/openai/v1",
+            model="llama-3.1-8b-instant",
+            temperature=0.7,
+        ),
+        tts=cartesia.TTS(
+            api_key=os.environ["CARTESIA_API_KEY"],
+            voice="a0e99841-438c-4a64-b679-ae501e7d6091",
+            model="sonic",
+            language="en",
+        ),
+        vad=vad,
+    )
+    session.update_agent(agent)
 
     # 6. Wire up transcript publishing
     def _on_user_input(ev):
