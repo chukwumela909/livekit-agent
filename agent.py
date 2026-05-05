@@ -11,7 +11,6 @@ from livekit.agents import (
     Agent,
     AgentSession,
 )
-from livekit.agents.voice.room_io import RoomIO
 from livekit.plugins import deepgram, cartesia, openai, silero
 
 logger = logging.getLogger("voice-agent")
@@ -31,7 +30,7 @@ async def request_fnc(req: JobRequest):
 
 
 def _publish_transcript(ctx: JobContext, role: str, text: str):
-    """Send transcript text to all participants in the room via data messages."""
+    """Send transcript text to all participants via data messages."""
     try:
         payload = f'{{"role":"{role}","text":"{text}"}}'
         ctx.room.local_participant.send_text(
@@ -61,7 +60,7 @@ async def entrypoint(ctx: JobContext):
         logger.warning("VAD not preloaded; falling back to on-demand load.")
         vad = silero.VAD.load()
 
-    # 4. Configure the conversational agent
+    # 4. Build the agent (behavior + pipeline config)
     agent = Agent(
         instructions="You are a helpful, friendly voice assistant. Keep responses concise and conversational.",
         stt=deepgram.STT(
@@ -84,30 +83,9 @@ async def entrypoint(ctx: JobContext):
         vad=vad,
     )
 
-    # 5. Create session and bridge to the LiveKit room
-    session = AgentSession(
-        stt=deepgram.STT(
-            api_key=os.environ["DEEPGRAM_API_KEY"],
-            model="nova-2",
-            language="en-US",
-        ),
-        llm=openai.LLM(
-            api_key=os.environ["GROQ_API_KEY"],
-            base_url="https://api.groq.com/openai/v1",
-            model="llama-3.1-8b-instant",
-            temperature=0.7,
-        ),
-        tts=cartesia.TTS(
-            api_key=os.environ["CARTESIA_API_KEY"],
-            voice="a0e99841-438c-4a64-b679-ae501e7d6091",
-            model="sonic",
-            language="en",
-        ),
-        vad=vad,
-    )
-    session.update_agent(agent)
+    # 5. Create session and wire up transcript publishing
+    session = AgentSession()
 
-    # 6. Wire up transcript publishing
     def _on_user_input(ev):
         text = getattr(ev, "text", "") or getattr(ev, "transcript", "")
         if text:
@@ -123,15 +101,13 @@ async def entrypoint(ctx: JobContext):
     session.on("user_input_transcribed", _on_user_input)
     session.on("conversation_item_added", _on_conversation_item)
 
-    room_io = RoomIO(session, ctx.room, participant=participant)
-
+    # 6. Start the agent session in the room
     logger.info("Agent is now running and listening.")
-    await room_io.run()
+    await session.start(agent, room=ctx.room)
 
 
 def _extract_text(item) -> str:
     """Extract plain text from a ChatMessage or similar object."""
-    # Try content list first (ChatMessage content is list[ChatContent])
     content = getattr(item, "content", None)
     if isinstance(content, list):
         texts = []
@@ -143,7 +119,6 @@ def _extract_text(item) -> str:
         return " ".join(texts).strip()
     if isinstance(content, str):
         return content.strip()
-    # Fallback
     return str(content) if content else ""
 
 
