@@ -29,11 +29,11 @@ async def request_fnc(req: JobRequest):
     await req.accept()
 
 
-def _publish_transcript(ctx: JobContext, role: str, text: str):
+async def _publish_transcript(ctx: JobContext, role: str, text: str):
     """Send transcript text to all participants via data messages."""
     try:
         payload = f'{{"role":"{role}","text":"{text}"}}'
-        ctx.room.local_participant.send_text(
+        await ctx.room.local_participant.send_text(
             payload,
             topic="transcript",
         )
@@ -86,17 +86,19 @@ async def entrypoint(ctx: JobContext):
     # 5. Create session and wire up transcript publishing
     session = AgentSession()
 
+    import asyncio
+
     def _on_user_input(ev):
         text = getattr(ev, "text", "") or getattr(ev, "transcript", "")
         if text:
-            _publish_transcript(ctx, "user", text)
+            asyncio.create_task(_publish_transcript(ctx, "user", text))
 
     def _on_conversation_item(ev):
         item = getattr(ev, "item", None)
         if item and getattr(item, "role", None) == "assistant":
             text = _extract_text(item)
             if text:
-                _publish_transcript(ctx, "agent", text)
+                asyncio.create_task(_publish_transcript(ctx, "agent", text))
 
     session.on("user_input_transcribed", _on_user_input)
     session.on("conversation_item_added", _on_conversation_item)
