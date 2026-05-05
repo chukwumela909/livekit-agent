@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 
 
 def prewarm(proc: JobProcess):
-    """Preload heavy models (VAD) before accepting jobs."""
+    """Preload Silero VAD before accepting jobs."""
     logger.info("Preloading Silero VAD...")
     proc.userdata["vad"] = silero.VAD.load()
 
@@ -33,10 +33,7 @@ async def _publish_transcript(ctx: JobContext, role: str, text: str):
     """Send transcript text to all participants via data messages."""
     try:
         payload = f'{{"role":"{role}","text":"{text}"}}'
-        await ctx.room.local_participant.send_text(
-            payload,
-            topic="transcript",
-        )
+        await ctx.room.local_participant.send_text(payload, topic="transcript")
         logger.info(f"Published {role} transcript: {text[:60]}...")
     except Exception as e:
         logger.warning(f"Failed to publish transcript: {e}")
@@ -47,22 +44,22 @@ async def entrypoint(ctx: JobContext):
     room_name = ctx.room.name
     logger.info(f"Starting agent for room: {room_name}")
 
-    # 1. Connect to the room and auto-subscribe to audio tracks
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
-
-    # 2. Wait for at least one human participant to join
     participant = await ctx.wait_for_participant()
     logger.info(f"Participant joined: {participant.identity}")
 
-    # 3. Retrieve preloaded VAD from worker userdata
     vad = ctx.proc.userdata.get("vad")
     if vad is None:
         logger.warning("VAD not preloaded; falling back to on-demand load.")
         vad = silero.VAD.load()
 
-    # 4. Build the agent (behavior + pipeline config)
+    # 1. Build the agent (behavior only — no pipeline components here)
     agent = Agent(
         instructions="You are a helpful, friendly voice assistant. Keep responses concise and conversational.",
+    )
+
+    # 2. Create session with pipeline components
+    session = AgentSession(
         stt=deepgram.STT(
             api_key=os.environ["DEEPGRAM_API_KEY"],
             model="nova-2",
@@ -83,9 +80,7 @@ async def entrypoint(ctx: JobContext):
         vad=vad,
     )
 
-    # 5. Create session and wire up transcript publishing
-    session = AgentSession()
-
+    # 3. Wire up transcript publishing
     import asyncio
 
     def _on_user_input(ev):
@@ -103,7 +98,7 @@ async def entrypoint(ctx: JobContext):
     session.on("user_input_transcribed", _on_user_input)
     session.on("conversation_item_added", _on_conversation_item)
 
-    # 6. Start the agent session in the room
+    # 4. Start the session in the room
     logger.info("Agent is now running and listening.")
     await session.start(agent, room=ctx.room)
 
