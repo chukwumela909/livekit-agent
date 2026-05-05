@@ -30,6 +30,19 @@ async def request_fnc(req: JobRequest):
     await req.accept()
 
 
+def _publish_transcript(ctx: JobContext, role: str, text: str):
+    """Send transcript text to all participants in the room via data messages."""
+    try:
+        payload = f'{{"role":"{role}","text":"{text}"}}'
+        ctx.room.local_participant.send_text(
+            payload,
+            topic="transcript",
+        )
+        logger.info(f"Published {role} transcript: {text[:60]}...")
+    except Exception as e:
+        logger.warning(f"Failed to publish transcript: {e}")
+
+
 async def entrypoint(ctx: JobContext):
     """Called when the agent is assigned a job."""
     room_name = ctx.room.name
@@ -73,10 +86,45 @@ async def entrypoint(ctx: JobContext):
 
     # 5. Create session and bridge to the LiveKit room
     session = AgentSession(agent=agent)
+
+    # 6. Wire up transcript publishing
+    def _on_user_input(ev):
+        text = getattr(ev, "text", "") or getattr(ev, "transcript", "")
+        if text:
+            _publish_transcript(ctx, "user", text)
+
+    def _on_conversation_item(ev):
+        item = getattr(ev, "item", None)
+        if item and getattr(item, "role", None) == "assistant":
+            text = _extract_text(item)
+            if text:
+                _publish_transcript(ctx, "agent", text)
+
+    session.on("user_input_transcribed", _on_user_input)
+    session.on("conversation_item_added", _on_conversation_item)
+
     room_io = RoomIO(session, ctx.room, participant=participant)
 
     logger.info("Agent is now running and listening.")
     await room_io.run()
+
+
+def _extract_text(item) -> str:
+    """Extract plain text from a ChatMessage or similar object."""
+    # Try content list first (ChatMessage content is list[ChatContent])
+    content = getattr(item, "content", None)
+    if isinstance(content, list):
+        texts = []
+        for c in content:
+            if isinstance(c, str):
+                texts.append(c)
+            elif hasattr(c, "text"):
+                texts.append(str(c.text))
+        return " ".join(texts).strip()
+    if isinstance(content, str):
+        return content.strip()
+    # Fallback
+    return str(content) if content else ""
 
 
 if __name__ == "__main__":
